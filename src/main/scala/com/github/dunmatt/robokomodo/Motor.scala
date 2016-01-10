@@ -9,13 +9,17 @@ import squants.time.TimeConversions._
 import SquantsHelpers._
 
 // https://www.pololu.com/product/2273
-class Motor(controllerAddress: Byte, channel1: Boolean, mountAngle: Angle) {
+class Motor(val controllerAddress: Byte, val channel1: Boolean, mountAngle: Angle) {
   val wheelDiameter = 60 millimeters
   val gearboxReduction = (22*20*22*22*23) / (12*12*10*10*10)
-  val encoderCountsPerRevolution = 48
+  val encoderCountsPerMotorTurn = 48
 
-  def pulsesToShaftSpeed(pulses: Frequency): AngularVelocity = {
+  def pulseRateToMotorSpeed(pulseRate: Frequency): AngularVelocity = {
     val dt = 1.seconds
-    ((pulses * dt).toEach / encoderCountsPerRevolution / gearboxReduction).turns / dt
+    ((pulseRate * dt).toEach / encoderCountsPerMotorTurn).turns / dt
+  }
+
+  def pulseRateToShaftSpeed(pulseRate: Frequency): AngularVelocity = {
+    pulseRateToMotorSpeed(pulseRate) / gearboxReduction
   }
 }
