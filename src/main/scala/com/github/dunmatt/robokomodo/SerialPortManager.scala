@@ -6,23 +6,32 @@ import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import org.slf4j.LoggerFactory
 import scala.collection.JavaConversions._
+import scala.collection.mutable
 import scala.concurrent.{ Await, Future, Promise }
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{ Failure, Try }
 
 class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventListener {
-  val log = LoggerFactory.getLogger(getClass)
+  protected val log = LoggerFactory.getLogger(getClass)
+  protected val buffer = ByteBuffer.allocate(128)
+  protected val commandQueue = mutable.Queue.empty[() => Unit]
+  protected var resultsHandler: Option[ByteBuffer => Unit] = None
 
   log.info(s"Attempting to open ${portInfo.getName}...")
   protected val port: SerialPort = portInfo.open("Robokomodo Control", SerialPortManager.TIMEOUT).asInstanceOf[SerialPort]
+  protected val input = Channels.newChannel(port.getInputStream)
+  protected val output = Channels.newChannel(port.getOutputStream)
   port.addEventListener(this)
   port.notifyOnDataAvailable(true)
-  log.info(s"${portInfo.getName} open.")
-
-  protected val input = Channels.newChannel(port.getInputStream)
-
-  protected val output = Channels.newChannel(port.getOutputStream)
+  log.info(s"${portInfo.getName} open, looking for RoboClaws...")
+  val connectedRoboClaws = (0x80 until 0x88).map(_.toByte).filter(connectsToRoboClaw).toSet
+  if (connectedRoboClaws.isEmpty) {
+    log.info(s"No RoboClaws found connected to ${portInfo.getName}.")
+    disconnect
+  } else {
+    log.info(s"Found RoboClaws at addresses ${connectedRoboClaws.map(_.toInt)}.")
+  }
 
   def disconnect: Unit = {
     port.removeEventListener
@@ -32,13 +41,29 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
     log.info(s"Disconnected from ${portInfo.getName}")
   }
 
-  protected val buffer = ByteBuffer.allocate(128)
-  protected var resultsHandler: Option[ByteBuffer => Unit] = None
+  def sendCommand[R](cmd: Command[R]): Future[R] = {
+    val result = Promise[R]
+    commandQueue.synchronized {
+      if (commandQueue.isEmpty && resultsHandler.isEmpty) {
+        actuallySendCommand(cmd, result)
+      } else {
+        commandQueue.enqueue( () => actuallySendCommand(cmd, result))
+      }
+    }
+    result.future
+  }
+
+  protected def completePromise[R](p: Promise[R], result: Try[R]): Unit = {
+    resultsHandler = None
+    commandQueue.synchronized {
+      commandQueue.dequeue()()  // sends the next queued command
+    }
+    p.complete(result)
+  }
 
   protected def buildSimpleDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = {
     def handler(data: ByteBuffer): Unit = {
-      resultsHandler = None
-      p.complete(cmd.parseResults(data))
+      completePromise(p, cmd.parseResults(data))
     }
     handler
   }
@@ -46,21 +71,18 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
   protected def buildChecksummedDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = {
     def handler(data: ByteBuffer): Unit = {
       if (Utilities.verifyChecksum(cmd.address, cmd.command, data)) {
-        resultsHandler = None
-        p.complete(cmd.parseResults(data))
+        completePromise(p, cmd.parseResults(data))
       } else {
-        println(s"$cmd not yet: $data")
-        (0 until 29).foreach{ i => println(data.get(i)) }
-        println("===")
-        println(cmd.parseResults(data))
+        log.warn(s"$cmd not yet: $data")  // TODO: demote this to debug, once it's clear how often it happens
+        // (0 until 29).foreach{ i => println(data.get(i)) }
+        // println("===")
+        // println(cmd.parseResults(data))
       }
     }
     handler
   }
 
-  def sendCommand[R](cmd: Command[R]): Future[R] = {
-    // TODO: potentially enqueue this command
-    val result = Promise[R]
+  protected def actuallySendCommand[R](cmd: Command[R], result: Promise[R]): Unit = {
     if (cmd.expectsCrc) {
       resultsHandler = Some(buildChecksummedDataHandler(cmd, result))
     } else {
@@ -69,7 +91,10 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
     cmd.populateByteBuffer(buffer)
     output.write(buffer)
     buffer.clear
-    result.future
+  }
+
+  protected def connectsToRoboClaw(address: Byte): Boolean = {
+    Try(Await.result(sendCommand(ReadFirmwareVersion(address)), 100 millis)).isSuccess
   }
 
   override def serialEvent(evt: SerialPortEvent): Unit = evt.getEventType match {
@@ -80,14 +105,6 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
       resultsHandler.foreach(_(buffer))
     case SerialPortEvent.OUTPUT_BUFFER_EMPTY => Unit
     case _ => log.debug(s"Non data-available serial port event: $evt.")
-  }
-
-  def connectedToRoboClaw: Boolean = {
-    // TODO: scan through all possible addresses
-    Await.result(sendCommand(ReadFirmwareVersion(0x86.toByte)).map { s =>
-      println(s)  // TODO: take this out
-      s.nonEmpty
-    }, 500 millis)
   }
 }
 
@@ -101,7 +118,7 @@ object SerialPortManager {
 
   def findXbees = findSerialPorts("/dev/cu.usbserial")
 
-  def findSerialPorts(prefix: String): Seq[SerialPortManager] = {
+  def findSerialPorts(prefix: String): Set[SerialPortManager] = {
     CommPortIdentifier.getPortIdentifiers.map {
       case p: CommPortIdentifier => p  // hooray java type erasure!
     }.filter { p =>
@@ -109,7 +126,7 @@ object SerialPortManager {
     }.map { p =>
       new SerialPortManager(p)
     }.filter {
-      _.connectedToRoboClaw
-    }.toSeq
+      _.connectedRoboClaws.nonEmpty
+    }.toSet
   }
 }
