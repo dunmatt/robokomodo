@@ -1,6 +1,6 @@
 package com.github.dunmatt.robokomodo
 
-import com.github.dunmatt.roboclaw.{ Command, ReadFirmwareVersion, Utilities }
+import com.github.dunmatt.roboclaw.{ Command, ReadStandardConfigSettings, Utilities }
 import gnu.io._
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
@@ -30,7 +30,7 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
     log.info(s"No RoboClaws found connected to ${portInfo.getName}.")
     disconnect
   } else {
-    log.info(s"Found RoboClaws at addresses ${connectedRoboClaws.map(_.toInt)}.")
+    log.info(s"Found RoboClaws at addresses ${connectedRoboClaws.map(_ & 0xff)}.")
   }
 
   def disconnect: Unit = {
@@ -56,30 +56,24 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
   protected def completePromise[R](p: Promise[R], result: Try[R]): Unit = {
     resultsHandler = None
     commandQueue.synchronized {
-      commandQueue.dequeue()()  // sends the next queued command
+      if (commandQueue.nonEmpty) {
+        commandQueue.dequeue()()  // sends the next queued command
+      }
     }
     p.complete(result)
   }
 
-  protected def buildSimpleDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = {
-    def handler(data: ByteBuffer): Unit = {
-      completePromise(p, cmd.parseResults(data))
-    }
-    handler
+  protected def buildSimpleDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = { (data: ByteBuffer) =>
+    completePromise(p, cmd.parseResults(data))
   }
 
-  protected def buildChecksummedDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = {
-    def handler(data: ByteBuffer): Unit = {
-      if (Utilities.verifyChecksum(cmd.address, cmd.command, data)) {
-        completePromise(p, cmd.parseResults(data))
-      } else {
-        log.warn(s"$cmd not yet: $data")  // TODO: demote this to debug, once it's clear how often it happens
-        // (0 until 29).foreach{ i => println(data.get(i)) }
-        // println("===")
-        // println(cmd.parseResults(data))
-      }
+  protected def buildChecksummedDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = { (data: ByteBuffer) =>
+    if (Utilities.verifyChecksum(cmd.address, cmd.command, data)) {
+      buffer.flip
+      completePromise(p, cmd.parseResults(data))
+    } else {
+      log.warn(s"$cmd not yet: $data")  // TODO: demote this to debug, once it's clear how often it happens
     }
-    handler
   }
 
   protected def actuallySendCommand[R](cmd: Command[R], result: Promise[R]): Unit = {
@@ -94,10 +88,10 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
   }
 
   protected def connectsToRoboClaw(address: Byte): Boolean = {
-    Try(Await.result(sendCommand(ReadFirmwareVersion(address)), 100 millis)).isSuccess
+    Try(Await.result(sendCommand(ReadStandardConfigSettings(address)), 100 millis)).toOption.exists(_.address == address)
   }
 
-  override def serialEvent(evt: SerialPortEvent): Unit = evt.getEventType match {
+  protected override def serialEvent(evt: SerialPortEvent): Unit = evt.getEventType match {
     case SerialPortEvent.DATA_AVAILABLE if resultsHandler.isEmpty =>
       log.warn("Receiving data despite no current command.")
     case SerialPortEvent.DATA_AVAILABLE =>
