@@ -20,6 +20,7 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
 
   log.info(s"Attempting to open ${portInfo.getName}...")
   protected val port: SerialPort = portInfo.open("Robokomodo Control", SerialPortManager.TIMEOUT).asInstanceOf[SerialPort]
+  port.setSerialPortParams(57600, SerialPort.DATABITS_8, SerialPort.STOPBITS_1, SerialPort.PARITY_NONE)
   protected val input = Channels.newChannel(port.getInputStream)
   protected val output = Channels.newChannel(port.getOutputStream)
   port.addEventListener(this)
@@ -85,10 +86,16 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
     cmd.populateByteBuffer(buffer)
     output.write(buffer)
     buffer.clear
+    Future {  // in case for whatever reason the motor controller doesn't get back to us, time out
+      Thread.sleep(100)
+      completePromise(result, Failure(new Exception("no response in 100ms")))
+    }
   }
 
   protected def connectsToRoboClaw(address: Byte): Boolean = {
-    Try(Await.result(sendCommand(ReadStandardConfigSettings(address)), 100 millis)).toOption.exists(_.address == address)
+    Try(Await.result(sendCommand(ReadStandardConfigSettings(address)), 1000 millis)).toOption.exists { config =>
+      config.address == address && config.packetSerialMode
+    }
   }
 
   protected override def serialEvent(evt: SerialPortEvent): Unit = evt.getEventType match {
