@@ -87,7 +87,7 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
     output.write(buffer)
     buffer.clear
     Future {  // in case for whatever reason the motor controller doesn't get back to us, time out
-      Thread.sleep(100)
+      Thread.sleep(50)
       completePromise(result, Failure(new Exception("no response in 100ms")))
     }
   }
