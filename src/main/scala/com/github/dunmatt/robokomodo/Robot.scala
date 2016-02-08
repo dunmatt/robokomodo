@@ -1,6 +1,6 @@
 package com.github.dunmatt.robokomodo
 
-import com.github.dunmatt.roboclaw._
+import com.github.dunmatt.roboclaw.{ DriveM1M2WithSignedSpeed, DriveM2WithSignedSpeed, TwoMotorData, UnitCommand }
 import squants.motion.{ AngularVelocity, Velocity }
 import squants.space.AngleConversions._
 import squants.space.LengthConversions._
