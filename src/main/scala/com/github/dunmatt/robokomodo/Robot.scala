@@ -7,9 +7,10 @@ import squants.space.LengthConversions._
 import SquantsHelpers._
 
 class Robot() {
-  val motors = RoboTriple( new Motor(0x86.toByte, false, -60 degrees)
-                         , new Motor(0x86.toByte, true,  60 degrees)
-                         , new Motor(0x87.toByte, false,  60 degrees))
+  // TODO: clean up the mapping from motor controller channel to motor, as is there are redundancies
+  val motors = RoboTriple( new Motor(0x86.toByte, true, -60 degrees)
+                         , new Motor(0x86.toByte, false, 60 degrees)
+                         , new Motor(0x87.toByte, false, 60 degrees))
   val radius = 146 millimeters  // this value from CAD, make sure it's up to date
 
   // TODO: delete this if it isn't used by the first test of the base
@@ -28,14 +29,19 @@ class Robot() {
     }
   }
 
-  // def motorControllerCommandsToAchieve(setPoint: RoboTriple[AngularVelocity]): Set[UnitCommand] = {
-  //   // TODO: write me
-  //   val setFreqs = setPoint.map { vel =>
-  //   }
-  //   // DriveM1M2WithSignedSpeed
-  // }
+  def motorControllerCommandsToAchieve(setPoint: RoboTriple[AngularVelocity]): Set[UnitCommand] = {
+    val freqs = motors.zip(setPoint).map { case (m, s) =>
+      m.motorSpeedToPulseRate(s)
+    }
+    val a = DriveM1M2WithSignedSpeed(motors.left.controllerAddress, TwoMotorData(freqs.left, freqs.right))
+    val b = DriveM2WithSignedSpeed(motors.rear.controllerAddress, freqs.rear)
+    Set(a, b)
+  }
 }
 
 case class RoboTriple[A](left: A, right: A, rear: A) {
   def map[B](fn: A=>B): RoboTriple[B] = RoboTriple(fn(left), fn(right), fn(rear))
+  def zip[B](rt: RoboTriple[B]): RoboTriple[(A, B)] = RoboTriple( (left, rt.left)
+                                                                , (right, rt.right)
+                                                                , (rear, rt.rear))
 }
