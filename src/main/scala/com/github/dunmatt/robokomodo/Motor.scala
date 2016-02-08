@@ -13,6 +13,11 @@ class Motor(val controllerAddress: Byte, val channel1: Boolean, mountAngle: Angl
   val wheelDiameter = 60 millimeters
   val gearboxReduction = (22*20*22*22*23) / (12*12*10*10*10)
   val encoderCountsPerMotorTurn = 48
+  // [i j] is the "forward" vector for the wheel
+  val i = -mountAngle.sin
+  val j = -mountAngle.cos
+
+  def wheelCircumference = wheelDiameter * math.Pi
 
   def pulseRateToMotorSpeed(pulseRate: Frequency): AngularVelocity = {
     val dt = 1.seconds
