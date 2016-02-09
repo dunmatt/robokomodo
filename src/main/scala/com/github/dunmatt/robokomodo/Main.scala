@@ -7,5 +7,5 @@ import scala.util.Try
 object Main extends App {
   val ports = SerialPortManager.findXbees
   Thread.sleep(1000)
-  println(Try(ports.foreach(_.disconnect)))
+  println(Try(ports.values.toSet.foreach{ m: SerialPortManager => m.disconnect }))
 }

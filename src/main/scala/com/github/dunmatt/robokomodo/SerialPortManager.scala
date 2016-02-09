@@ -119,15 +119,14 @@ object SerialPortManager {
 
   def findXbees = findSerialPorts("/dev/cu.usbserial")
 
-  def findSerialPorts(prefix: String): Set[SerialPortManager] = {
+  def findSerialPorts(prefix: String): Map[Byte, SerialPortManager] = {
     CommPortIdentifier.getPortIdentifiers.map {
       case p: CommPortIdentifier => p  // hooray java type erasure!
     }.filter { p =>
       p.getPortType == CommPortIdentifier.PORT_SERIAL && p.getName.startsWith(prefix)
-    }.map { p =>
-      new SerialPortManager(p)
-    }.filter {
-      _.connectedRoboClaws.nonEmpty
-    }.toSet
+    }.flatMap { p =>
+      val m = new SerialPortManager(p)
+      m.connectedRoboClaws.map((_, m))
+    }.toMap
   }
 }

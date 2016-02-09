@@ -30,6 +30,10 @@ class Robot() {
     }
   }
 
+  def motorControllerCommandsToAchieve(setPoints: RobotCoordinateRates): Set[UnitCommand] = {
+    motorControllerCommandsToAchieve(motorSpeedsToAchieve(setPoints))
+  }
+
   def motorControllerCommandsToAchieve(setPoint: RoboTriple[AngularVelocity]): Set[UnitCommand] = {
     val freqs = motors.zip(setPoint).map { case (m, s) => m.motorSpeedToPulseRate(s) }
     val a = DriveM1M2WithSignedSpeed(motors.left.controllerAddress, TwoMotorData(freqs.left, freqs.right))
