@@ -21,18 +21,17 @@ class Robot() {
   //   case _ => None   // TODO: log a warning
   // }
 
-  def motorSpeedsToAchieve(x: Velocity, y: Velocity, theta: AngularVelocity): RoboTriple[AngularVelocity] = {
+  def motorSpeedsToAchieve(setPoints: RobotCoordinateRates): RoboTriple[AngularVelocity] = {
     motors.map { m =>
-      val spinContribution = theta * (radius / m.wheelCircumference)
-      val linearContribution = m.i * x.rotationalSpeed(radius) + m.j * y.rotationalSpeed(radius)
-      spinContribution + linearContribution
+      val spinContribution = setPoints.dTheta * (radius / m.wheelCircumference)
+      val xContribution = m.i * setPoints.dx.rotationalSpeed(radius)
+      val yContribution = m.j * setPoints.dy.rotationalSpeed(radius)
+      spinContribution + xContribution + yContribution
     }
   }
 
   def motorControllerCommandsToAchieve(setPoint: RoboTriple[AngularVelocity]): Set[UnitCommand] = {
-    val freqs = motors.zip(setPoint).map { case (m, s) =>
-      m.motorSpeedToPulseRate(s)
-    }
+    val freqs = motors.zip(setPoint).map { case (m, s) => m.motorSpeedToPulseRate(s) }
     val a = DriveM1M2WithSignedSpeed(motors.left.controllerAddress, TwoMotorData(freqs.left, freqs.right))
     val b = DriveM2WithSignedSpeed(motors.rear.controllerAddress, freqs.rear)
     Set(a, b)
