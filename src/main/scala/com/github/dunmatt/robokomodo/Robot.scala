@@ -27,13 +27,22 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
                                , motors.right.controllerAddress
                                , motors.rear.controllerAddress)
 
+  protected def allowedTransitions(prev: State, cur: State): Boolean = (prev, cur) match {
+    case (SHUT_DOWN, _) => false
+    case (NOT_STARTED, READY) => true
+    case (NOT_STARTED, SHUT_DOWN) => true
+    case (NOT_STARTED, _) => false
+    case (_, NOT_STARTED) => false
+    case (_, _) => true
+  }
+
   protected def handleStateTransition(prev: State, cur: State): Unit = (prev, cur) match {
     case (RUNNING, _) => // TODO: disable the weapon
     case (_, RUNNING) => // TODO: enable the weapon
     case (_, _) => Unit
   }
 
-  private var fsm = new StateMachine[State](NOT_STARTED, handleStateTransition)
+  private var fsm = new StateMachine[State](NOT_STARTED, allowedTransitions, handleStateTransition)
 
   // TODO: delete this if it isn't used by the first test of the base
   // def getMotor(address: Byte, channel1: Boolean): Option[Motor] = (address, channel1) match {
@@ -52,7 +61,10 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
   }
 
   def aiStep(): Unit = fsm.state match {
-    case NOT_STARTED => Thread.sleep(10)
+    case NOT_STARTED => Thread.sleep(10)  // TODO: read the settings from the robot and check health
+    case READY => Thread.sleep(10)
+    case GoingTo(loc) => Unit  // TODO: write me
+    case RUNNING => Unit  // TODO: write me
     case SHUT_DOWN => Unit
   }
 

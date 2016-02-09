@@ -10,6 +10,14 @@ object Main extends App {
   val ports = SerialPortManager.findXbees
   val robot = new Robot(ports)
   if (robot.requiredControllers.subsetOf(ports.keySet)) {
+    // this bad boy intercepts SIGINT and Ctrl+C
+    val mainThread = Thread.currentThread
+    Runtime.getRuntime.addShutdownHook(new Thread() {override def run = {
+      log.info("Shutdown hook triggered.")
+      robot.stopAndShutDown
+      mainThread.join()
+    }})
+    // do everything
     robot.aiLoop
   } else {
     log.error(s"Couldn't find motor controllers: ${robot.requiredControllers &~ ports.keySet}")
