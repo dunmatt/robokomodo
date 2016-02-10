@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.Success
+import squants.electro.ElectricPotential
 import squants.electro.ElectricPotentialConversions._
 import squants.motion.{ AngularVelocity, Velocity }
 import squants.space.AngleConversions._
@@ -28,6 +29,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
                          , new Motor(0x87.toByte, false, 60 degrees))
   val radius = 146 millimeters  // this value from CAD, make sure it's up to date
   val batteryCellCount = 4
+  val safeVoltageRange = Range(MIN_LIPO_CELL_VOLTAGE * batteryCellCount, MAX_LIPO_CELL_VOLTAGE * batteryCellCount)
   // TODO: add the weapon motor
   val requiredControllers = Set( motors.left.controllerAddress
                                , motors.right.controllerAddress
@@ -82,18 +84,11 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
   def startMotorController(addr: Byte): Future[Boolean] = {
     val port = serialPorts(addr)
     port.sendCommand(ReadFirmwareVersion(addr)).foreach{ v => log.info(s"Found roboclaw at $addr ($v).") }
-    // TODO: refactor this, we'll want to poll voltage more than once...
-    val voltageOkay = port.sendCommand(ReadMainBatteryVoltageSettings(addr)).map{ range =>
-      val expectedMin = MIN_LIPO_CELL_VOLTAGE * batteryCellCount
-      val expectedMax = MAX_LIPO_CELL_VOLTAGE * batteryCellCount
-      if (range.min == expectedMin && range.max == expectedMax) {
-        range
-      } else {
-        log.debug(s"Got unexpected battery voltage range $range, resetting.")
-        port.sendCommand(SetMainBatteryVoltages(addr, expectedMin, expectedMax))
-        Range(expectedMin, expectedMax)
-      }
-    }.flatMap{ range =>
+    val voltageOkay = Utilities.readSetRead( port
+                                           , ReadMainBatteryVoltageSettings(addr)
+                                           , ((r: Range[ElectricPotential]) => r.min == safeVoltageRange.min && r.max == safeVoltageRange.max)
+                                           , SetMainBatteryVoltages(addr, safeVoltageRange.min, safeVoltageRange.max)
+                                           , Some(log)).flatMap{ range =>
       port.sendCommand(ReadMainBatteryVoltage(addr)).andThen{ case Success(v) =>
         val batteryLevel = (v - range.min) / (range.max - range.min) * 100
         log.info(s"Main battery at $batteryLevel% ($v)")
@@ -106,7 +101,23 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
         log.error(s"Status check failed, code ${status.status & 0xffff}")
       }
     }.map(_.normal)
-    val encodersOkay = port.sendCommand(ReadEncoderMode(addr))
+    val encodersOkay = Utilities.readSetRead( port
+                                            , ReadEncoderMode(addr)
+                                            , ((encs: TwoMotorData[EncoderMode]) => encs.m1 == QUADRATURE && encs.m2 == QUADRATURE)
+                                            , Seq(SetMotor1EncoderMode(addr, QUADRATURE), SetMotor2EncoderMode(addr, QUADRATURE))
+                                            , Some(log)).map(_ => true)
+    val configOkay = port.sendCommand(ReadStandardConfigSettings(addr)).filter{ config =>
+      if (!config.packetSerialMode) {
+        log.error(s"RoboClaw $addr not in packet serial mode!")
+      }
+      if (!config.multiUnitMode) {
+        log.error(s"RoboClaw $addr not in multi unit mode!")
+      }
+      if (!batteryProtectValid(config)) {
+        log.error(s"Invalid battery protection level!")
+      }
+      config.packetSerialMode && config.multiUnitMode && batteryProtectValid(config)
+    }
     voltageOkay
   }
 
@@ -140,6 +151,18 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
     val a = DriveM1M2WithSignedSpeed(motors.left.controllerAddress, TwoMotorData(freqs.left, freqs.right))
     val b = DriveM2WithSignedSpeed(motors.rear.controllerAddress, freqs.rear)
     Set(a, b)
+  }
+
+  protected def batteryProtectValid(config: ConfigSettings): Boolean = {
+    config.batteryProtectAuto || (batteryCellCount match {
+      case 2 => config.batteryProtect2Cell
+      case 3 => config.batteryProtect3Cell
+      case 4 => config.batteryProtect4Cell
+      case 5 => config.batteryProtect5Cell
+      case 6 => config.batteryProtect6Cell
+      case 7 => config.batteryProtect7Cell
+      case _ => false
+    })
   }
 }
 
