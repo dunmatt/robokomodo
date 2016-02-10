@@ -81,8 +81,8 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
 
   def startMotorController(addr: Byte): Future[Boolean] = {
     val port = serialPorts(addr)
-    val version = port.sendCommand(ReadFirmwareVersion(addr))
-    version.foreach{ v => log.info(s"Found roboclaw at $addr ($v).") }
+    port.sendCommand(ReadFirmwareVersion(addr)).foreach{ v => log.info(s"Found roboclaw at $addr ($v).") }
+    // TODO: refactor this, we'll want to poll voltage more than once...
     val voltageOkay = port.sendCommand(ReadMainBatteryVoltageSettings(addr)).map{ range =>
       val expectedMin = MIN_LIPO_CELL_VOLTAGE * batteryCellCount
       val expectedMax = MAX_LIPO_CELL_VOLTAGE * batteryCellCount
@@ -99,6 +99,14 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
         log.info(s"Main battery at $batteryLevel% ($v)")
       }.map(range.contains)
     }
+    val statusOkay = port.sendCommand(ReadStatus(addr)).andThen{ case Success(status) =>
+      if (status.normal) {
+        log.info("Passed status check")
+      } else {
+        log.error(s"Status check failed, code ${status.status & 0xffff}")
+      }
+    }.map(_.normal)
+    val encodersOkay = port.sendCommand(ReadEncoderMode(addr))
     voltageOkay
   }
 
