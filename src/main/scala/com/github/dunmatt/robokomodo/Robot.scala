@@ -5,7 +5,8 @@ import org.slf4j.LoggerFactory
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.Success
-import squants.electro.ElectricPotential
+import squants.electro.{ ElectricCurrent, ElectricPotential }
+import squants.electro.ElectricCurrentConversions._
 import squants.electro.ElectricPotentialConversions._
 import squants.motion.{ AngularVelocity, Velocity }
 import squants.space.AngleConversions._
@@ -23,10 +24,12 @@ case object SHUT_DOWN extends State
 class Robot(serialPorts: Map[Byte, SerialPortManager]) {
   import Robot._
   protected val log = LoggerFactory.getLogger(getClass)
+  protected val stallCurrent = 6.5 amps  // from the pololu product page
+  protected val ratedVoltage = 6 volts  // from the pololu product page
   // TODO: clean up the mapping from motor controller channel to motor, as is there are redundancies
-  val motors = RoboTriple( new Motor(0x86.toByte, true, -60 degrees)
-                         , new Motor(0x86.toByte, false, 60 degrees)
-                         , new Motor(0x87.toByte, false, 60 degrees))
+  val motors = RoboTriple( new Motor(0x86.toByte, true, -60 degrees, ratedVoltage / stallCurrent)
+                         , new Motor(0x86.toByte, false, 60 degrees, ratedVoltage / stallCurrent)
+                         , new Motor(0x87.toByte, false, 60 degrees, ratedVoltage / stallCurrent))
   val radius = 146 millimeters  // this value from CAD, make sure it's up to date
   val batteryCellCount = 4
   val safeVoltageRange = Range(MIN_LIPO_CELL_VOLTAGE * batteryCellCount, MAX_LIPO_CELL_VOLTAGE * batteryCellCount)
@@ -84,6 +87,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
   def startMotorController(addr: Byte): Future[Boolean] = {
     val port = serialPorts(addr)
     port.sendCommand(ReadFirmwareVersion(addr)).foreach{ v => log.info(s"Found roboclaw at $addr ($v).") }
+    // TODO: consider moving all of these into a trait that holds validation crap
     val voltageOkay = Utilities.readSetRead( port
                                            , ReadMainBatteryVoltageSettings(addr)
                                            , ((r: Range[ElectricPotential]) => r.min == safeVoltageRange.min && r.max == safeVoltageRange.max)
@@ -119,6 +123,30 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
       config.packetSerialMode && config.multiUnitMode && batteryProtectValid(config)
     }
     voltageOkay
+  }
+
+  def setUpCurrentLimits(mainVoltage: ElectricPotential): Future[Boolean] = {
+    val limit = stallCurrent * ratedVoltage / mainVoltage
+    val setCorrectly = (ec: ElectricCurrent) => ec == limit
+    val leftAddress = motors.left.controllerAddress
+    val left = Utilities.readSetRead( serialPorts(leftAddress)
+                                    , motors.left.chooseCommand(ReadM1CurrentLimit(leftAddress), ReadM2CurrentLimit(leftAddress))
+                                    , setCorrectly
+                                    , motors.left.chooseCommand(SetM1CurrentLimit(leftAddress, limit), SetM1CurrentLimit(leftAddress, limit))
+                                    , Some(log)).map(setCorrectly)
+    val rightAddress = motors.right.controllerAddress
+    val right = Utilities.readSetRead( serialPorts(rightAddress)
+                                     , motors.right.chooseCommand(ReadM1CurrentLimit(rightAddress), ReadM2CurrentLimit(rightAddress))
+                                     , setCorrectly
+                                     , motors.right.chooseCommand(SetM1CurrentLimit(rightAddress, limit), SetM1CurrentLimit(rightAddress, limit))
+                                     , Some(log)).map(setCorrectly)
+    val rearAddress = motors.rear.controllerAddress
+    val rear = Utilities.readSetRead( serialPorts(rearAddress)
+                                    , motors.rear.chooseCommand(ReadM1CurrentLimit(rearAddress), ReadM2CurrentLimit(rearAddress))
+                                    , setCorrectly
+                                    , motors.rear.chooseCommand(SetM1CurrentLimit(rearAddress, limit), SetM1CurrentLimit(rearAddress, limit))
+                                    , Some(log)).map(setCorrectly)
+    Future.reduce(Seq(left, right, rear))(_ && _)
   }
 
   def stop: Unit = {

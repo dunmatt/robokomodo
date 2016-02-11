@@ -1,6 +1,6 @@
 package com.github.dunmatt.robokomodo
 
-import com.github.dunmatt.roboclaw.{ Command, ReadStandardConfigSettings, Utilities }
+import com.github.dunmatt.roboclaw.{ Command, ReadStandardConfigSettings }
 import gnu.io._
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
@@ -69,7 +69,7 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
   }
 
   protected def buildChecksummedDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = { (data: ByteBuffer) =>
-    if (Utilities.verifyChecksum(cmd.address, cmd.command, data)) {
+    if (com.github.dunmatt.roboclaw.Utilities.verifyChecksum(cmd.address, cmd.command, data)) {
       buffer.flip
       completePromise(p, cmd.parseResults(data))
     } else {
