@@ -15,6 +15,7 @@ import SquantsHelpers._
 
 sealed trait State
 case object NOT_STARTED extends State
+case object STARTING extends State
 case object READY extends State
 case class GoingTo(coord: ArenaCoordinate) extends State
 case object RUNNING extends State
@@ -40,9 +41,11 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
 
   protected def allowedTransitions(prev: State, cur: State): Boolean = (prev, cur) match {
     case (SHUT_DOWN, _) => false
-    case (NOT_STARTED, READY) => true
+    case (NOT_STARTED, STARTING) => true
     case (NOT_STARTED, SHUT_DOWN) => true
     case (NOT_STARTED, _) => false
+    case (STARTING, READY) => true
+    case (STARTING, SHUT_DOWN) => true
     case (_, NOT_STARTED) => false
     case (_, _) => true
   }
@@ -72,7 +75,8 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   }
 
   def aiStep: Unit = fsm.state match {
-    case NOT_STARTED => start
+    case NOT_STARTED => fsm.state = STARTING; start
+    case STARTING => Thread.sleep(10)
     case READY => Thread.sleep(10)
     case GoingTo(loc) => Unit  // TODO: write me
     case RUNNING => Unit  // TODO: write me
@@ -81,48 +85,22 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
 
   def start: Unit = {
     // TODO: do something with the results...
-    serialPorts.keySet.map(startMotorController)
+    Future.reduce(serialPorts.keySet.map(startMotorController))(_ && _).onSuccess{ case bootSuccessful =>
+      if (bootSuccessful) {
+        fsm.state = READY
+      }
+    }
   }
 
   def startMotorController(addr: Byte): Future[Boolean] = {
     val port = serialPorts(addr)
     port.sendCommand(ReadFirmwareVersion(addr)).foreach{ v => log.info(s"Found roboclaw at $addr ($v).") }
-    // TODO: consider moving all of these into a trait that holds validation crap
-    val voltageOkay = Utilities.readSetRead( port
-                                           , ReadMainBatteryVoltageSettings(addr)
-                                           , ((r: Range[ElectricPotential]) => r.min == safeVoltageRange.min && r.max == safeVoltageRange.max)
-                                           , SetMainBatteryVoltages(addr, safeVoltageRange.min, safeVoltageRange.max)
-                                           , Some(log)).flatMap{ range =>
-      port.sendCommand(ReadMainBatteryVoltage(addr)).andThen{ case Success(v) =>
-        val batteryLevel = (v - range.min) / (range.max - range.min) * 100
-        log.info(s"Main battery at $batteryLevel% ($v)")
-      }.map(range.contains)
-    }
-    val statusOkay = port.sendCommand(ReadStatus(addr)).andThen{ case Success(status) =>
-      if (status.normal) {
-        log.info("Passed status check")
-      } else {
-        log.error(s"Status check failed, code ${status.status & 0xffff}")
-      }
-    }.map(_.normal)
-    val encodersOkay = Utilities.readSetRead( port
-                                            , ReadEncoderMode(addr)
-                                            , ((encs: TwoMotorData[EncoderMode]) => encs.m1 == QUADRATURE && encs.m2 == QUADRATURE)
-                                            , Seq(SetMotor1EncoderMode(addr, QUADRATURE), SetMotor2EncoderMode(addr, QUADRATURE))
-                                            , Some(log)).map(_ => true)
-    val configOkay = port.sendCommand(ReadStandardConfigSettings(addr)).filter{ config =>
-      if (!config.packetSerialMode) {
-        log.error(s"RoboClaw $addr not in packet serial mode!")
-      }
-      if (!config.multiUnitMode) {
-        log.error(s"RoboClaw $addr not in multi unit mode!")
-      }
-      if (!batteryProtectValid(config)) {
-        log.error(s"Invalid battery protection level!")
-      }
-      config.packetSerialMode && config.multiUnitMode && batteryProtectValid(config)
-    }
-    voltageOkay
+    Future.reduce(Set( checkBatteryVoltageAndLimits(addr, port)
+                     , checkStatus(addr, port)
+                     , checkEncoders(addr, port)
+                     , checkConfiguration(addr, port)
+                    // TODO: check the PID parameters and include them in the results
+                     ))(_ && _)
   }
 
   def stop: Unit = {
@@ -155,18 +133,6 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
     val a = DriveM1M2WithSignedSpeed(motors.left.controllerAddress, TwoMotorData(freqs.left, freqs.right))
     val b = DriveM2WithSignedSpeed(motors.rear.controllerAddress, freqs.rear)
     Set(a, b)
-  }
-
-  protected def batteryProtectValid(config: ConfigSettings): Boolean = {
-    config.batteryProtectAuto || (batteryCellCount match {
-      case 2 => config.batteryProtect2Cell
-      case 3 => config.batteryProtect3Cell
-      case 4 => config.batteryProtect4Cell
-      case 5 => config.batteryProtect5Cell
-      case 6 => config.batteryProtect6Cell
-      case 7 => config.batteryProtect7Cell
-      case _ => false
-    })
   }
 }
 
