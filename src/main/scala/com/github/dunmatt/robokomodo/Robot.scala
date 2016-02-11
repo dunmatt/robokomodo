@@ -21,7 +21,7 @@ case object RUNNING extends State
 case object SHUT_DOWN extends State
 // case object SELF_TEST extends State
 
-class Robot(serialPorts: Map[Byte, SerialPortManager]) {
+class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   import Robot._
   protected val log = LoggerFactory.getLogger(getClass)
   protected val stallCurrent = 6.5 amps  // from the pololu product page
@@ -123,30 +123,6 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) {
       config.packetSerialMode && config.multiUnitMode && batteryProtectValid(config)
     }
     voltageOkay
-  }
-
-  def setUpCurrentLimits(mainVoltage: ElectricPotential): Future[Boolean] = {
-    val limit = stallCurrent * ratedVoltage / mainVoltage
-    val setCorrectly = (ec: ElectricCurrent) => ec == limit
-    val leftAddress = motors.left.controllerAddress
-    val left = Utilities.readSetRead( serialPorts(leftAddress)
-                                    , motors.left.chooseCommand(ReadM1CurrentLimit(leftAddress), ReadM2CurrentLimit(leftAddress))
-                                    , setCorrectly
-                                    , motors.left.chooseCommand(SetM1CurrentLimit(leftAddress, limit), SetM1CurrentLimit(leftAddress, limit))
-                                    , Some(log)).map(setCorrectly)
-    val rightAddress = motors.right.controllerAddress
-    val right = Utilities.readSetRead( serialPorts(rightAddress)
-                                     , motors.right.chooseCommand(ReadM1CurrentLimit(rightAddress), ReadM2CurrentLimit(rightAddress))
-                                     , setCorrectly
-                                     , motors.right.chooseCommand(SetM1CurrentLimit(rightAddress, limit), SetM1CurrentLimit(rightAddress, limit))
-                                     , Some(log)).map(setCorrectly)
-    val rearAddress = motors.rear.controllerAddress
-    val rear = Utilities.readSetRead( serialPorts(rearAddress)
-                                    , motors.rear.chooseCommand(ReadM1CurrentLimit(rearAddress), ReadM2CurrentLimit(rearAddress))
-                                    , setCorrectly
-                                    , motors.rear.chooseCommand(SetM1CurrentLimit(rearAddress, limit), SetM1CurrentLimit(rearAddress, limit))
-                                    , Some(log)).map(setCorrectly)
-    Future.reduce(Seq(left, right, rear))(_ && _)
   }
 
   def stop: Unit = {
