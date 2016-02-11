@@ -4,11 +4,10 @@ import com.github.dunmatt.roboclaw._
 import org.slf4j.LoggerFactory
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.util.Success
-import squants.electro.{ ElectricCurrent, ElectricPotential }
+import scala.util.{ Failure, Success }
 import squants.electro.ElectricCurrentConversions._
 import squants.electro.ElectricPotentialConversions._
-import squants.motion.{ AngularVelocity, Velocity }
+import squants.motion.{ AngularVelocity }
 import squants.space.AngleConversions._
 import squants.space.LengthConversions._
 import SquantsHelpers._
@@ -27,7 +26,6 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   protected val log = LoggerFactory.getLogger(getClass)
   protected val stallCurrent = 6.5 amps  // from the pololu product page
   protected val ratedVoltage = 6 volts  // from the pololu product page
-  // TODO: clean up the mapping from motor controller channel to motor, as is there are redundancies
   val motors = RoboTriple( new Motor(0x86.toByte, true, -60 degrees, ratedVoltage / stallCurrent)
                          , new Motor(0x86.toByte, false, 60 degrees, ratedVoltage / stallCurrent)
                          , new Motor(0x87.toByte, false, 60 degrees, ratedVoltage / stallCurrent))
@@ -41,12 +39,13 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
 
   protected def allowedTransitions(prev: State, cur: State): Boolean = (prev, cur) match {
     case (SHUT_DOWN, _) => false
+    case (_, NOT_STARTED) => false
     case (NOT_STARTED, STARTING) => true
     case (NOT_STARTED, SHUT_DOWN) => true
     case (NOT_STARTED, _) => false
     case (STARTING, READY) => true
     case (STARTING, SHUT_DOWN) => true
-    case (_, NOT_STARTED) => false
+    case (STARTING, _) => false
     case (_, _) => true
   }
 
@@ -57,14 +56,6 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   }
 
   private var fsm = new StateMachine[State](NOT_STARTED, allowedTransitions, handleStateTransition)
-
-  // TODO: delete this if it isn't used by the first test of the base
-  // def getMotor(address: Byte, channel1: Boolean): Option[Motor] = (address, channel1) match {
-  //   case (rightMotor.controllerAddress, rightMotor.channel1) => Some(rightMotor)
-  //   case (leftMotor.controllerAddress, leftMotor.channel1) => Some(leftMotor)
-  //   case (rearMotor.controllerAddress, rearMotor.channel1) => Some(rearMotor)
-  //   case _ => None   // TODO: log a warning
-  // }
 
   def aiLoop: Unit = {
     while (fsm.state != SHUT_DOWN) {
@@ -84,11 +75,16 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   }
 
   def start: Unit = {
-    // TODO: do something with the results...
-    Future.reduce(serialPorts.keySet.map(startMotorController))(_ && _).onSuccess{ case bootSuccessful =>
-      if (bootSuccessful) {
+    Future.reduce(serialPorts.keySet.map(startMotorController))(_ && _).onComplete {
+      case Success(true) =>
         fsm.state = READY
-      }
+      case Success(false) =>
+        log.error("Problem initializing robot, shutting down.")
+        fsm.state = SHUT_DOWN
+      case Failure(e) =>
+        log.error(s"Problem initializing robot: $e")
+        log.error("Shutting down.")
+        fsm.state = SHUT_DOWN
     }
   }
 
@@ -116,23 +112,24 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   }
 
   def motorSpeedsToAchieve(setPoints: RobotCoordinateRates): RoboTriple[AngularVelocity] = {
-    motors.map { m =>
-      val spinContribution = setPoints.dTheta * (radius / m.wheelCircumference)
-      val xContribution = m.i * setPoints.dx.rotationalSpeed(radius)
-      val yContribution = m.j * setPoints.dy.rotationalSpeed(radius)
+    motors.map { motor =>
+      val spinContribution = setPoints.dTheta * (radius / motor.wheelCircumference)
+      val xContribution = motor.i * setPoints.dx.rotationalSpeed(radius)
+      val yContribution = motor.j * setPoints.dy.rotationalSpeed(radius)
       spinContribution + xContribution + yContribution
     }
   }
 
-  def motorControllerCommandsToAchieve(setPoints: RobotCoordinateRates): Set[UnitCommand] = {
+  def motorControllerCommandsToAchieve(setPoints: RobotCoordinateRates): RoboTriple[Command[Unit]] = {
     motorControllerCommandsToAchieve(motorSpeedsToAchieve(setPoints))
   }
 
-  def motorControllerCommandsToAchieve(setPoint: RoboTriple[AngularVelocity]): Set[UnitCommand] = {
-    val freqs = motors.zip(setPoint).map { case (m, s) => m.motorSpeedToPulseRate(s) }
-    val a = DriveM1M2WithSignedSpeed(motors.left.controllerAddress, TwoMotorData(freqs.left, freqs.right))
-    val b = DriveM2WithSignedSpeed(motors.rear.controllerAddress, freqs.rear)
-    Set(a, b)
+  def motorControllerCommandsToAchieve(setPoints: RoboTriple[AngularVelocity]): RoboTriple[Command[Unit]] = {
+    motors.zip(setPoints).map{ case (motor, setPoint) =>
+      val addr = motor.controllerAddress
+      val pulseRate = motor.motorSpeedToPulseRate(setPoint)
+      motor.chooseCommand(DriveM1WithSignedSpeed(addr, pulseRate), DriveM2WithSignedSpeed(addr, pulseRate))
+    }
   }
 }
 
