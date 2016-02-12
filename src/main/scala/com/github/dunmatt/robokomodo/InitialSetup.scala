@@ -40,7 +40,11 @@ trait InitialSetup {
                          ).flatMap{ range =>
       port.sendCommand(ReadMainBatteryVoltage(addr)).andThen{ case Success(v) =>
         val batteryLevel = (v - range.min) / (range.max - range.min) * 100
-        log.info(s"Main battery at $batteryLevel% ($v)")
+        if (batteryLevel > 75d) {
+          log.info(s"Main battery at $batteryLevel% ($v)")
+        } else {
+          log.warn(s"MAIN BATTERY LOW!  $batteryLevel% ($v)")
+        }
       }.map(range.contains)
     }
   }

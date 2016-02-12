@@ -8,6 +8,8 @@ import scala.util.{ Failure, Success }
 import squants.electro.ElectricCurrentConversions._
 import squants.electro.ElectricPotentialConversions._
 import squants.motion.{ AngularVelocity }
+import squants.motion.VelocityConversions._
+import squants.motion.AngularVelocityConversions._
 import squants.space.AngleConversions._
 import squants.space.LengthConversions._
 import SquantsHelpers._
@@ -69,7 +71,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
     case NOT_STARTED => fsm.state = STARTING; start
     case STARTING => Thread.sleep(10)
     case READY => Thread.sleep(10)
-    case GoingTo(loc) => Unit  // TODO: write me
+    case GoingTo(loc) => Unit  // TODO: call driveTowards
     case RUNNING => Unit  // TODO: write me
     case SHUT_DOWN => Unit
   }
@@ -99,6 +101,13 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
                      ))(_ && _)
   }
 
+  def goTo(target: ArenaCoordinate): Unit = fsm.state match {
+    case READY => fsm.state = GoingTo(target)
+    case GoingTo(_) => fsm.state = GoingTo(target)
+    case RUNNING => fsm.state = GoingTo(target)
+    case _ => Unit
+  }
+
   def stop: Unit = {
     fsm.state = READY
     serialPorts.foreach { case (addr, port) =>
@@ -109,6 +118,18 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   def stopAndShutDown: Unit = {
     stop
     fsm.state = SHUT_DOWN
+  }
+
+  protected def driveTowards(current: ArenaCoordinate, target: ArenaCoordinate): Unit = {
+    if (current.distanceTo(target) < 5.centimeters) {  // TODO: pull this threshhold out and put it somewhere good
+      fsm.state = READY
+    } else {
+      // TODO: maybe do something smart to generate the speed?
+      val setPoints = current.relativePositionOf(target).approachAt(1.mps, 1.radiansPerSecond)
+      motorControllerCommandsToAchieve(setPoints).foreach{ cmd =>
+        serialPorts(cmd.address).sendCommand(cmd)
+      }
+    }
   }
 
   def motorSpeedsToAchieve(setPoints: RobotCoordinateRates): RoboTriple[AngularVelocity] = {
@@ -139,6 +160,11 @@ object Robot {
 }
 
 case class RoboTriple[A](left: A, right: A, rear: A) {
+  def foreach(fn: A=>Unit): Unit = {
+    fn(left)
+    fn(right)
+    fn(rear)
+  }
   def map[B](fn: A=>B): RoboTriple[B] = RoboTriple(fn(left), fn(right), fn(rear))
   def zip[B](rt: RoboTriple[B]): RoboTriple[(A, B)] = RoboTriple( (left, rt.left)
                                                                 , (right, rt.right)
