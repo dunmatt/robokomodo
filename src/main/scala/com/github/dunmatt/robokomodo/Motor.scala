@@ -15,7 +15,8 @@ import SquantsHelpers._
 class Motor( val controllerAddress: Byte
            , val channel1: Boolean  // TODO: does this need to be exposed?
            , mountAngle: Angle
-           , stallResistance: ElectricalResistance) {
+           , stallResistance: ElectricalResistance
+           , kv: AngularVelocity) {
   val wheelDiameter = 60 millimeters
   val gearboxReduction = (22*20*22*22*23) / (12*12*10*10*10)
   val encoderCountsPerMotorTurn = 48 each
@@ -40,6 +41,8 @@ class Motor( val controllerAddress: Byte
   }
 
   def stallCurrentAt(voltage: ElectricPotential): ElectricCurrent = voltage / stallResistance
+
+  def freeRunSpeedAt(voltage: ElectricPotential): AngularVelocity = voltage.toVolts * kv / gearboxReduction
 
   def chooseCommand[T](m1Cmd: Command[T], m2Cmd: Command[T]): Command[T] = channel1 match {
     case true => m1Cmd

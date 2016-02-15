@@ -14,6 +14,7 @@ import scala.util.{ Failure, Try }
 
 class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventListener {
   protected val log = LoggerFactory.getLogger(getClass)
+  // TODO: can sending and receiving compete for this buffer?
   protected val buffer = ByteBuffer.allocate(128)
   protected val commandQueue = mutable.Queue.empty[() => Unit]
   protected var resultsHandler: Option[ByteBuffer => Unit] = None
@@ -55,8 +56,8 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
   }
 
   protected def completePromise[R](p: Promise[R], result: Try[R]): Unit = {
-    resultsHandler = None
     commandQueue.synchronized {
+      resultsHandler = None
       if (commandQueue.nonEmpty) {
         commandQueue.dequeue()()  // sends the next queued command
       }

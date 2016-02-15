@@ -28,9 +28,10 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   protected val log = LoggerFactory.getLogger(getClass)
   protected val stallCurrent = 6.5 amps  // from the pololu product page
   protected val ratedVoltage = 6 volts  // from the pololu product page
-  val motors = RoboTriple( new Motor(0x86.toByte, true, -60 degrees, ratedVoltage / stallCurrent)
-                         , new Motor(0x86.toByte, false, 60 degrees, ratedVoltage / stallCurrent)
-                         , new Motor(0x87.toByte, false, 60 degrees, ratedVoltage / stallCurrent))
+  protected val freeRunSpeed = (10000 / ratedVoltage.toVolts / 60).turnsPerSecond  // from the pololu product page
+  val motors = RoboTriple( new Motor(0x86.toByte, true, -60 degrees, ratedVoltage / stallCurrent, freeRunSpeed)
+                         , new Motor(0x86.toByte, false, 60 degrees, ratedVoltage / stallCurrent, freeRunSpeed)
+                         , new Motor(0x87.toByte, false, 60 degrees, ratedVoltage / stallCurrent, freeRunSpeed))
   val radius = 146 millimeters  // this value from CAD, make sure it's up to date
   val batteryCellCount = 4
   val safeVoltageRange = Range(MIN_LIPO_CELL_VOLTAGE * batteryCellCount, MAX_LIPO_CELL_VOLTAGE * batteryCellCount)
@@ -40,13 +41,12 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
                                , motors.rear.controllerAddress)
 
   protected def allowedTransitions(prev: State, cur: State): Boolean = (prev, cur) match {
+    case (_, SHUT_DOWN) => true
     case (SHUT_DOWN, _) => false
     case (_, NOT_STARTED) => false
     case (NOT_STARTED, STARTING) => true
-    case (NOT_STARTED, SHUT_DOWN) => true
     case (NOT_STARTED, _) => false
     case (STARTING, READY) => true
-    case (STARTING, SHUT_DOWN) => true
     case (STARTING, _) => false
     case (_, _) => true
   }
@@ -67,18 +67,19 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
     log.info("Shutting down.")
   }
 
-  def aiStep: Unit = fsm.state match {
+  protected def aiStep: Unit = fsm.state match {
     case NOT_STARTED => fsm.state = STARTING; start
-    case STARTING => Thread.sleep(10)
+    case STARTING => Thread.sleep(10)  // wait for async starting stuff to complete
     case READY => Thread.sleep(10)
     case GoingTo(loc) => Unit  // TODO: call driveTowards
     case RUNNING => Unit  // TODO: write me
     case SHUT_DOWN => Unit
   }
 
-  def start: Unit = {
+  protected def start: Unit = {
     Future.reduce(serialPorts.keySet.map(startMotorController))(_ && _).onComplete {
       case Success(true) =>
+        // TODO: start watchdogs
         fsm.state = READY
       case Success(false) =>
         log.error("Problem initializing robot, shutting down.")
@@ -90,7 +91,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
     }
   }
 
-  def startMotorController(addr: Byte): Future[Boolean] = {
+  protected def startMotorController(addr: Byte): Future[Boolean] = {
     val port = serialPorts(addr)
     port.sendCommand(ReadFirmwareVersion(addr)).foreach{ v => log.info(s"Found roboclaw at $addr ($v).") }
     Future.reduce(Set( checkBatteryVoltageAndLimits(addr, port)
@@ -122,7 +123,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
 
   protected def driveTowards(current: ArenaCoordinate, target: ArenaCoordinate): Unit = {
     if (current.distanceTo(target) < 5.centimeters) {  // TODO: pull this threshhold out and put it somewhere good
-      fsm.state = READY
+      stop
     } else {
       // TODO: maybe do something smart to generate the speed?
       val setPoints = current.relativePositionOf(target).approachAt(1.mps, 1.radiansPerSecond)

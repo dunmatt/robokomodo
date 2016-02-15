@@ -16,7 +16,9 @@ trait InitialSetup {
   protected def safeVoltageRange: Range[ElectricPotential]
   protected def batteryCellCount: Int
 
-  def setUpCurrentLimits(mainVoltage: ElectricPotential, serialPorts: Map[Byte, SerialPortManager]): Future[Boolean] = {
+  protected def setUpCurrentLimits(mainVoltage: ElectricPotential, serialPorts: Map[Byte, SerialPortManager]): Future[Boolean] = {
+    // TODO: ReadM2CurrentLimit might not work properly, if so failure here should be expected...
+    // TODO: test it by setting really tiny current limits and seeing if a motor will spin
     val limit = stallCurrent * ratedVoltage / mainVoltage
     val setCorrectly = (ec: ElectricCurrent) => ec == limit
     val results = motors.map{ motor =>
@@ -31,7 +33,7 @@ trait InitialSetup {
     Future.reduce(Seq(results.left, results.right, results.rear))(_ && _)
   }
 
-  def checkBatteryVoltageAndLimits(addr: Byte, port: SerialPortManager): Future[Boolean] = {
+  protected def checkBatteryVoltageAndLimits(addr: Byte, port: SerialPortManager): Future[Boolean] = {
     Utilities.readSetRead( port
                          , ReadMainBatteryVoltageSettings(addr)
                          , ((r: Range[ElectricPotential]) => r.min == safeVoltageRange.min && r.max == safeVoltageRange.max)
@@ -49,7 +51,7 @@ trait InitialSetup {
     }
   }
 
-  def checkStatus(addr: Byte, port: SerialPortManager): Future[Boolean] = {
+  protected def checkStatus(addr: Byte, port: SerialPortManager): Future[Boolean] = {
     port.sendCommand(ReadStatus(addr)).andThen{ case Success(status) =>
       if (status.normal) {
         log.info("Passed status check")
@@ -59,7 +61,7 @@ trait InitialSetup {
     }.map(_.normal)
   }
 
-  def checkConfiguration(addr: Byte, port: SerialPortManager): Future[Boolean] = {
+  protected def checkConfiguration(addr: Byte, port: SerialPortManager): Future[Boolean] = {
     port.sendCommand(ReadStandardConfigSettings(addr)).map{ config =>
       if (!config.packetSerialMode) {
         log.error(s"RoboClaw $addr not in packet serial mode!")
@@ -74,12 +76,13 @@ trait InitialSetup {
     }
   }
 
-  def checkEncoders(addr: Byte, port: SerialPortManager): Future[Boolean] = {
+  protected def checkEncoders(addr: Byte, port: SerialPortManager): Future[Boolean] = {
+    val setCorrectly = (encs: TwoMotorData[EncoderMode]) => encs.m1 == QUADRATURE && encs.m2 == QUADRATURE
     Utilities.readSetRead( port
                          , ReadEncoderMode(addr)
-                         , ((encs: TwoMotorData[EncoderMode]) => encs.m1 == QUADRATURE && encs.m2 == QUADRATURE)
+                         , setCorrectly
                          , Seq(SetMotor1EncoderMode(addr, QUADRATURE), SetMotor2EncoderMode(addr, QUADRATURE))
-                         , Some(log)).map(_ => true)
+                         , Some(log)).map(setCorrectly)
   }
 
   protected def batteryProtectValid(config: ConfigSettings): Boolean = {

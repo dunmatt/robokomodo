@@ -8,6 +8,7 @@ val managedDependencies = Seq(
   // , "com.lihaoyi" %% "scalarx" % "0.2.8"
   , "com.squants" %% "squants" % "0.5.3"
   // , "org.slf4j" % "slf4j-log4j12" % "1.7.13"
+  // , "io.reactivex" %% "rxscala" % "x.y.z"
   , "org.slf4j" % "slf4j-jdk14" % "1.7.13"
 )
 
