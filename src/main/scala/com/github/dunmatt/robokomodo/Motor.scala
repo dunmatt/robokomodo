@@ -13,7 +13,7 @@ import SquantsHelpers._
 
 // https://www.pololu.com/product/2273
 class Motor( val controllerAddress: Byte
-           , channel1: Boolean  // TODO: does this need to be exposed?
+           , channel1: Boolean
            , val forward: Angle
            , stallResistance: ElectricalResistance
            , kv: AngularVelocity) {
