@@ -23,10 +23,6 @@ object SquantsHelpers {
     def speedAtDistance(radius: Length): Velocity = av.toRadiansPerSecond * radius / 1.seconds
   }
 
-  implicit class SmarterVelocity(v: Velocity) {
-    def rotationalSpeed(radius: Length): AngularVelocity = RadiansPerSecond(v * 1.seconds / radius)
-  }
-
   def atan2(y: Double, x: Double): Angle = math.atan2(y, x).radians
 
   def atan2(y: Length, x: Length): Angle = math.atan2(y.toMeters, x.toMeters).radians

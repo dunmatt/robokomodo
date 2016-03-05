@@ -3,7 +3,7 @@ package com.github.dunmatt.robokomodo
 import com.github.dunmatt.roboclaw._
 import squants.DimensionlessConversions._
 import squants.electro.{ ElectricalResistance, ElectricCurrent, ElectricPotential }
-import squants.motion.AngularVelocity
+import squants.motion.{ AngularVelocity, TurnsPerSecond, Velocity }
 import squants.space.Angle
 import squants.space.AngleConversions._
 import squants.space.LengthConversions._
@@ -14,17 +14,18 @@ import SquantsHelpers._
 // https://www.pololu.com/product/2273
 class Motor( val controllerAddress: Byte
            , val channel1: Boolean  // TODO: does this need to be exposed?
-           , mountAngle: Angle
+           , val forward: Angle
            , stallResistance: ElectricalResistance
            , kv: AngularVelocity) {
   val wheelDiameter = 60 millimeters
   val gearboxReduction = (22*20*22*22*23) / (12*12*10*10*10)
   val encoderCountsPerMotorTurn = 48 each
-  // [i j] is the "forward" vector for the wheel
-  val i = -mountAngle.sin
-  val j = -mountAngle.cos
 
   def wheelCircumference = wheelDiameter * math.Pi
+
+  def wheelSpeedAtLinearSpeed(v: Velocity): AngularVelocity = {
+    TurnsPerSecond(v * 1.seconds / wheelCircumference)
+  }
 
   def pulseRateToMotorSpeed(pulseRate: Frequency): AngularVelocity = {
     val dt = 1.seconds

@@ -28,10 +28,10 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   protected val log = LoggerFactory.getLogger(getClass)
   protected val stallCurrent = 6.5 amps  // from the pololu product page
   protected val ratedVoltage = 6 volts  // from the pololu product page
-  protected val freeRunSpeed = (10000 / ratedVoltage.toVolts / 60).turnsPerSecond  // from the pololu product page
-  val motors = RoboTriple( new Motor(0x86.toByte, true, -60 degrees, ratedVoltage / stallCurrent, freeRunSpeed)
-                         , new Motor(0x86.toByte, false, 60 degrees, ratedVoltage / stallCurrent, freeRunSpeed)
-                         , new Motor(0x87.toByte, false, 60 degrees, ratedVoltage / stallCurrent, freeRunSpeed))
+  protected val kv = (10000 / ratedVoltage.toVolts / 60).turnsPerSecond  // from the pololu product page
+  val motors = RoboTriple( new Motor(0x86.toByte, true, 150 degrees, ratedVoltage / stallCurrent, kv)
+                         , new Motor(0x86.toByte, false, 30 degrees, ratedVoltage / stallCurrent, kv)
+                         , new Motor(0x87.toByte, false, 270 degrees, ratedVoltage / stallCurrent, kv))
   val radius = 146 millimeters  // this value from CAD, make sure it's up to date
   val batteryCellCount = 4
   val safeVoltageRange = Range(MIN_LIPO_CELL_VOLTAGE * batteryCellCount, MAX_LIPO_CELL_VOLTAGE * batteryCellCount)
@@ -133,16 +133,16 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
     }
   }
 
-  def motorSpeedsToAchieve(setPoints: RobotCoordinateRates): RoboTriple[AngularVelocity] = {
+  def motorSpeedsToAchieve(setPoints: RobotPolarRates): RoboTriple[AngularVelocity] = {
     motors.map { motor =>
-      val spinContribution = setPoints.dTheta * (radius / motor.wheelCircumference)
-      val xContribution = motor.i * setPoints.dx.rotationalSpeed(radius)
-      val yContribution = motor.j * setPoints.dy.rotationalSpeed(radius)
-      spinContribution + xContribution + yContribution
+      // the math here comes from http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.99.1083&rep=rep1&type=pdf
+      val spin = setPoints.dTheta * (radius / motor.wheelCircumference)
+      val translate = setPoints.v * (motor.forward - setPoints.theta).cos
+      spin + motor.wheelSpeedAtLinearSpeed(translate)
     }
   }
 
-  def motorControllerCommandsToAchieve(setPoints: RobotCoordinateRates): RoboTriple[Command[Unit]] = {
+  def motorControllerCommandsToAchieve(setPoints: RobotPolarRates): RoboTriple[Command[Unit]] = {
     motorControllerCommandsToAchieve(motorSpeedsToAchieve(setPoints))
   }
 
@@ -150,6 +150,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
     motors.zip(setPoints).map{ case (motor, setPoint) =>
       val addr = motor.controllerAddress
       val pulseRate = motor.motorSpeedToPulseRate(setPoint)
+      // TODO: refactor me to use the chooser class
       motor.chooseCommand(DriveM1WithSignedSpeed(addr, pulseRate), DriveM2WithSignedSpeed(addr, pulseRate))
     }
   }

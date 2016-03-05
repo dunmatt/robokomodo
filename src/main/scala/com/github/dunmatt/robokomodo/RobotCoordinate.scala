@@ -5,11 +5,14 @@ import squants.space.{ Angle, Length }
 import SquantsHelpers._
 
 case class RobotCoordinate(x: Length, y: Length) {
-  def approachAt(v: Velocity, dTheta: AngularVelocity): RobotCoordinateRates = {
+  def approachAt(v: Velocity, dTheta: AngularVelocity): RobotPolarRates = {
     val theta = SquantsHelpers.atan2(y, x)
     // TODO: possibly negate dTheta if going around the other way would be faster
-    RobotCoordinateRates(v * theta.cos, v * theta.sin, dTheta)
+    RobotPolarRates(v, theta, dTheta)
   }
 }
 
-case class RobotCoordinateRates(dx: Velocity, dy: Velocity, dTheta: AngularVelocity)
+case class RobotPolarRates(v: Velocity, theta: Angle, dTheta: AngularVelocity) {
+  def dx: Velocity = v * theta.cos
+  def dy: Velocity = v * theta.sin
+}

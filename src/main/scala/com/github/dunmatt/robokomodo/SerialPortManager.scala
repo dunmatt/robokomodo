@@ -1,6 +1,6 @@
 package com.github.dunmatt.robokomodo
 
-import com.github.dunmatt.roboclaw.{ Command, ReadStandardConfigSettings }
+import com.github.dunmatt.roboclaw.{ Command, CommLayer, ReadStandardConfigSettings }
 import gnu.io._
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
@@ -12,9 +12,8 @@ import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{ Failure, Try }
 
-class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventListener {
+class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventListener with CommLayer {
   protected val log = LoggerFactory.getLogger(getClass)
-  // TODO: can sending and receiving compete for this buffer?
   protected val buffer = ByteBuffer.allocate(128)
   protected val commandQueue = mutable.Queue.empty[() => Unit]
   protected var resultsHandler: Option[ByteBuffer => Unit] = None
@@ -65,17 +64,18 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
     p.complete(result)
   }
 
-  protected def buildSimpleDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = { (data: ByteBuffer) =>
-    completePromise(p, cmd.parseResults(data))
+  protected def buildSimpleDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = {
+    (data: ByteBuffer) => completePromise(p, cmd.parseResults(data))
   }
 
-  protected def buildChecksummedDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = { (data: ByteBuffer) =>
-    if (com.github.dunmatt.roboclaw.Utilities.verifyChecksum(cmd.address, cmd.command, data)) {
-      buffer.flip
-      completePromise(p, cmd.parseResults(data))
-    } else {
-      log.warn(s"$cmd not yet: $data")  // TODO: demote this to debug, once it's clear how often it happens
-    }
+  protected def buildChecksummedDataHandler[R](cmd: Command[R], p: Promise[R]): (ByteBuffer => Unit) = {
+    (data: ByteBuffer) =>
+      if (com.github.dunmatt.roboclaw.Utilities.verifyChecksum(cmd.address, cmd.command, data)) {
+        buffer.flip
+        completePromise(p, cmd.parseResults(data))
+      } else {
+        log.warn(s"$cmd not yet: $data")  // TODO: demote this to debug, once it's clear how often it happens
+      }
   }
 
   protected def actuallySendCommand[R](cmd: Command[R], result: Promise[R]): Unit = {
@@ -88,7 +88,7 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
     output.write(buffer)
     buffer.clear
     Future {  // in case for whatever reason the motor controller doesn't get back to us, time out
-      val timeout = 50
+      val timeout = 250
       Thread.sleep(timeout)
       completePromise(result, Failure(new Exception(s"no response in ${timeout}ms")))
     }
@@ -102,7 +102,10 @@ class SerialPortManager(portInfo: CommPortIdentifier) extends SerialPortEventLis
 
   protected override def serialEvent(evt: SerialPortEvent): Unit = evt.getEventType match {
     case SerialPortEvent.DATA_AVAILABLE if resultsHandler.isEmpty =>
-      log.warn("Receiving data despite no current command.")
+      val errorBuffer = ByteBuffer.allocate(256)
+      input.read(errorBuffer)
+      val buf = (0 until errorBuffer.limit).map(errorBuffer.get(_) & 0xff).mkString(" ")
+      log.warn(s"Receiving data despite no current command: $buf")
     case SerialPortEvent.DATA_AVAILABLE =>
       input.read(buffer)
       resultsHandler.foreach(_(buffer))
@@ -121,6 +124,7 @@ object SerialPortManager {
 
   def findXbees = findSerialPorts("/dev/cu.usbserial")
 
+  // TODO: refactor this to return a future!
   def findSerialPorts(prefix: String): Map[Byte, SerialPortManager] = {
     CommPortIdentifier.getPortIdentifiers.map {
       case p: CommPortIdentifier => p  // hooray java type erasure!
