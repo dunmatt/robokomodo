@@ -4,7 +4,7 @@ lazy val commonSettings = Seq( organization := "com.github.dunmatt",
 
 resolvers += Resolver.mavenLocal
 val managedDependencies = Seq(
-  "com.github.dunmatt" %% "roboclaw" % "0.2.10"
+  "com.github.dunmatt" %% "roboclaw" % "0.2.12"
   // , "com.lihaoyi" %% "scalarx" % "0.2.8"
   , "com.squants" %% "squants" % "0.5.3"
   // , "org.slf4j" % "slf4j-log4j12" % "1.7.13"

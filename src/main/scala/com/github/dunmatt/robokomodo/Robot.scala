@@ -62,7 +62,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   def aiLoop: Unit = {
     while (fsm.state != SHUT_DOWN) {
       aiStep
-      // TODO: maybe sleep?
+      Thread.sleep(10)
     }
     log.info("Shutting down.")
   }
@@ -70,16 +70,21 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
   protected def aiStep: Unit = fsm.state match {
     case NOT_STARTED => fsm.state = STARTING; start
     case STARTING => Thread.sleep(10)  // wait for async starting stuff to complete
-    case READY => Thread.sleep(10)
-    case GoingTo(loc) => Unit  // TODO: call driveTowards
-    case RUNNING => Unit  // TODO: write me
+    case READY => verifyRobotHealth
+    case GoingTo(loc) =>
+      verifyRobotHealth.onSuccess {
+        case true =>  // TODO: call driveTowards
+      }
+    case RUNNING =>
+      verifyRobotHealth.onSuccess {
+        case true =>  // TODO: write me
+      }
     case SHUT_DOWN => Unit
   }
 
   protected def start: Unit = {
     Future.reduce(serialPorts.keySet.map(startMotorController))(_ && _).onComplete {
       case Success(true) =>
-        // TODO: start watchdogs
         fsm.state = READY
       case Success(false) =>
         log.error("Problem initializing robot, shutting down.")
@@ -100,6 +105,46 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
                      , checkConfiguration(addr, port)
                      , checkVelocityPid(serialPorts)
                      ))(_ && _)
+  }
+
+  protected def verifyRobotHealth: Future[Boolean] = {
+    val controllerHeaths = requiredControllers.map { addr =>
+      val port = serialPorts(addr)
+      val batteryFull = port.sendCommand(ReadMainBatteryVoltage(addr)).filter { v =>
+        safeVoltageRange.percentageThrough(v) < .25
+      }
+      batteryFull.onFailure {
+        case e: NoSuchElementException => log.error("LOW BATTERY")
+        case e => log.error("Comm error", e)
+      }
+      batteryFull.flatMap { _ =>
+        port.sendCommand(ReadStatus(addr)).andThen { case Success(status) =>
+          if (status.m1OverCurrentWarning || status.m2OverCurrentWarning) {
+            log.warn("Motor over current, limiting.")
+          }
+          if (status.eStop) {
+            log.info("E-Stop activated, stopping.")
+          }
+          if (status.temperatureError || status.temperature2Error) {
+            log.error("Motor controller overheating, stopping.")
+          }
+          if (status.mainBatteryHighError || status.logicBatteryHighError || status.logicBatteryLowError) {
+            log.error(s"Battery error, $status, stopping.")
+          }
+          if (status.m1DriverFault || status.m2DriverFault) {
+            log.error("Driver fault, stopping.")
+          }
+        }.map(s => !(s.error || s.eStop))
+      }
+    }
+    Future.reduce(controllerHeaths)(_ && _).andThen {
+      case Success(false) =>
+        log.error("Robot unhealthy.")
+        fsm.state = SHUT_DOWN
+      case Failure(e) =>
+        log.error("Error checking robot health", e)
+        fsm.state = SHUT_DOWN
+    }
   }
 
   def goTo(target: ArenaCoordinate): Unit = fsm.state match {
