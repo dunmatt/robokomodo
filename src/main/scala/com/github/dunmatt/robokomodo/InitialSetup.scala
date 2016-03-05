@@ -24,9 +24,9 @@ trait InitialSetup {
     val results = motors.map{ motor =>
       val addr = motor.controllerAddress
       Utilities.readSetRead( serialPorts(addr)
-                           , motor.chooseCommand(ReadM1CurrentLimit(addr), ReadM2CurrentLimit(addr))
+                           , motor.commandFactory.readCurrentLimit
                            , setCorrectly
-                           , motor.chooseCommand(SetM1CurrentLimit(addr, limit), SetM2CurrentLimit(addr, limit))
+                           , motor.commandFactory.setCurrentLimit(limit)
                            , Some(log)
                            ).map(setCorrectly)
     }

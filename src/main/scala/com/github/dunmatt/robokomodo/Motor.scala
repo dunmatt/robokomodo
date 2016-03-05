@@ -13,13 +13,14 @@ import SquantsHelpers._
 
 // https://www.pololu.com/product/2273
 class Motor( val controllerAddress: Byte
-           , val channel1: Boolean  // TODO: does this need to be exposed?
+           , channel1: Boolean  // TODO: does this need to be exposed?
            , val forward: Angle
            , stallResistance: ElectricalResistance
            , kv: AngularVelocity) {
   val wheelDiameter = 60 millimeters
   val gearboxReduction = (22*20*22*22*23) / (12*12*10*10*10)
   val encoderCountsPerMotorTurn = 48 each
+  val commandFactory = CommandFactory(controllerAddress, channel1)
 
   def wheelCircumference = wheelDiameter * math.Pi
 
@@ -44,9 +45,4 @@ class Motor( val controllerAddress: Byte
   def stallCurrentAt(voltage: ElectricPotential): ElectricCurrent = voltage / stallResistance
 
   def freeRunSpeedAt(voltage: ElectricPotential): AngularVelocity = voltage.toVolts * kv / gearboxReduction
-
-  def chooseCommand[T](m1Cmd: Command[T], m2Cmd: Command[T]): Command[T] = channel1 match {
-    case true => m1Cmd
-    case false => m2Cmd
-  }
 }

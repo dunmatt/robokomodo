@@ -148,10 +148,8 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
 
   def motorControllerCommandsToAchieve(setPoints: RoboTriple[AngularVelocity]): RoboTriple[Command[Unit]] = {
     motors.zip(setPoints).map{ case (motor, setPoint) =>
-      val addr = motor.controllerAddress
       val pulseRate = motor.motorSpeedToPulseRate(setPoint)
-      // TODO: refactor me to use the chooser class
-      motor.chooseCommand(DriveM1WithSignedSpeed(addr, pulseRate), DriveM2WithSignedSpeed(addr, pulseRate))
+      motor.commandFactory.driveWithSignedSpeed(pulseRate)
     }
   }
 }
