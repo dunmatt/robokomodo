@@ -98,6 +98,7 @@ class Robot(serialPorts: Map[Byte, SerialPortManager]) extends InitialSetup {
                      , checkStatus(addr, port)
                      , checkEncoders(addr, port)
                      , checkConfiguration(addr, port)
+                     , checkVelocityPid(serialPorts)
                     // TODO: check the PID parameters and include them in the results
                      ))(_ && _)
   }

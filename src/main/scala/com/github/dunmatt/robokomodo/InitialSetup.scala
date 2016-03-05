@@ -6,6 +6,8 @@ import squants.electro.{ ElectricCurrent, ElectricPotential }
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.Success
+import squants.time.Frequency
+import squants.time.FrequencyConversions._
 
 trait InitialSetup {
   import Robot._
@@ -16,17 +18,34 @@ trait InitialSetup {
   protected def safeVoltageRange: Range[ElectricPotential]
   protected def batteryCellCount: Int
 
-  protected def setUpCurrentLimits(mainVoltage: ElectricPotential, serialPorts: Map[Byte, SerialPortManager]): Future[Boolean] = {
+  protected def setUpCurrentLimits(mainVoltage: ElectricPotential, ports: Map[Byte, SerialPortManager]): Future[Boolean] = {
     // TODO: ReadM2CurrentLimit might not work properly, if so failure here should be expected...
     // TODO: test it by setting really tiny current limits and seeing if a motor will spin
     val limit = stallCurrent * ratedVoltage / mainVoltage
     val setCorrectly = (ec: ElectricCurrent) => ec == limit
     val results = motors.map{ motor =>
-      val addr = motor.controllerAddress
-      Utilities.readSetRead( serialPorts(addr)
+      Utilities.readSetRead( ports(motor.controllerAddress)
                            , motor.commandFactory.readCurrentLimit
                            , setCorrectly
                            , motor.commandFactory.setCurrentLimit(limit)
+                           , Some(log)
+                           ).map(setCorrectly)
+    }
+    Future.reduce(Seq(results.left, results.right, results.rear))(_ && _)
+  }
+
+  protected def checkVelocityPid(ports: Map[Byte, SerialPortManager]): Future[Boolean] = batteryCellCount match {
+    // TODO: support other battery sizes here
+    case 4 => checkVelocityPid(20000 hertz, PidConstants(0x100000, 0x80000, 0), ports)
+  }
+
+  protected def checkVelocityPid(qpps: Frequency, pid: PidConstants, ports: Map[Byte, SerialPortManager]): Future[Boolean] = {
+    val setCorrectly = (pair: (PidConstants, Frequency)) => pair._1 == pid && pair._2 == qpps
+    val results = motors.map{ motor =>
+      Utilities.readSetRead( ports(motor.controllerAddress)
+                           , motor.commandFactory.readVelocityPidAndQppsSettings
+                           , setCorrectly
+                           , motor.commandFactory.setVelocityPidConstants(qpps, pid)
                            , Some(log)
                            ).map(setCorrectly)
     }
